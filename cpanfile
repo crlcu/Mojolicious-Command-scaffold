@@ -1,6 +1,5 @@
 requires 'Mojo::Console';
 requires 'Mojo::File';
-requires 'Mojo::Home';
 requires 'Getopt::Long';
 requires 'List::Util';
 

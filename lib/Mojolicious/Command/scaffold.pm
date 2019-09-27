@@ -3,8 +3,7 @@ use Mojo::Base 'Mojo::Console';
 
 use Getopt::Long;
 use List::Util qw(any);
-use Mojo::File;
-use Mojo::Home;
+use Mojo::File 'path';
 
 our $VERSION = '0.0.1';
 
@@ -17,11 +16,12 @@ has 'options' => sub {
     my %options;
     GetOptions(\%options,
         'base|b:s',
-        'controller',
         'name=s',
+        'action=s',
         'pretend',
         'preview',
         'routes',
+        'create',
         'table=s',
         'template',
         'tests',
@@ -72,7 +72,7 @@ sub command {
     my $application = $self->piling->{ application };
     my $path = "lib/$application/Command/" . ($self->piling->{ package_path } ? $self->piling->{ package_path } . '/' : '');
 
-    $self->process($path, $self->piling->{ file_name }, $self->stub('stubs/command.pm', [
+    $self->process($path, $self->piling->{ file_name }, $self->stub('stubs/command.pm.stub', [
         'Application::Command'  => $self->piling->{ application } . '::Command',
         Stub                    => $self->piling->{ package_name },
     ]));
@@ -95,7 +95,7 @@ sub controller {
     my $application = $self->piling->{ application };
     my $controller_path = "lib/$application/Controller/" . ($self->piling->{ package_path } ? $self->piling->{ package_path } . '/' : '');
 
-    my $stub = $self->stub('stubs/Controller.pm', [
+    my $stub = $self->stub('stubs/Controller.pm.stub', [
         'Application::Controller'   => $self->piling->{ application } . '::Controller',
         Stub                        => $self->piling->{ package_name },
         'sub action'                => sprintf('sub %s', $self->options->{ action }),
@@ -113,7 +113,7 @@ sub controller {
         # Controller Tests
         my $controller_tests_path = "t/lib/TestCase/$application/Controller/" . ($self->piling->{ package_path } ? $self->piling->{ package_path } . '/' : '');
 
-        $self->process($controller_tests_path, $self->piling->{ file_name }, $self->stub('stubs/ControllerTests.pm', [
+        $self->process($controller_tests_path, $self->piling->{ file_name }, $self->stub('stubs/ControllerTests.pm.stub', [
             'Application::Controller'   => $self->piling->{ application } . '::Controller',
             Stub                        => $self->piling->{ package_name },
             'sub test_action'           => sprintf('sub test_%s', $self->options->{ action }),
@@ -234,7 +234,7 @@ sub routes {
     my $application = $self->piling->{ application };
     my $routes_path = "lib/$application/Routes/" . ($self->piling->{ package_path } ? $self->piling->{ package_path } . '/' : '');
 
-    $self->process($routes_path, $self->piling->{ file_name }, $self->stub('stubs/Routes.pm', [
+    $self->process($routes_path, $self->piling->{ file_name }, $self->stub('stubs/Routes.pm.stub', [
         Application             => $self->piling->{ application },
         Stub                    => $self->piling->{ package_name },
         "action => 'action'"    => sprintf("action => '%s'", $self->options->{ action }),
@@ -244,7 +244,7 @@ sub routes {
         # Routes Tests
         my $routes_tests_path = "t/lib/TestCase/$application/Routes/" . ($self->piling->{ package_path } ? $self->piling->{ package_path } . '/' : '');
 
-        $self->process($routes_tests_path, $self->piling->{ file_name }, $self->stub('stubs/RoutesTests.pm', [
+        $self->process($routes_tests_path, $self->piling->{ file_name }, $self->stub('stubs/RoutesTests.pm.stub', [
             Application => $self->piling->{ application },
             Stub        => $self->piling->{ package_name },
         ]));
@@ -257,16 +257,6 @@ sub routes {
 
 sub run {
     my ($self, $choice, @args) = @_;
-
-    # Find and manage the project root directory
-    my $home = Mojo::Home->new->detect;
-    $self->info($home . "\n");
-
-    my $file = $home->rel_file('stubs/command.pm');
-
-    $self->info(((-e $file) ? "yes" : "no") . "\n");
-    
-    exit;
     
     $choice = undef if ($choice eq '--pretend' || $choice eq '--preview');
     $choice ||= $self->choice('What are you looking to scaffold?', ['command', 'controller', 'migration', 'routes', 'task', 'template'], 'controller');
@@ -286,9 +276,16 @@ sub run {
 =cut
 
 sub stub {
-    my ($self, $file, $replacements) = @_;
+    my ($self, $filename, $replacements) = @_;
 
-    my $content = Mojo::File->new($file)->slurp;
+    my $file = $self->app->home->rel_file($filename);
+    my $content;
+
+    if ((-e $file)) {
+        $content = $file->slurp;
+    } else {
+        $content = path(__FILE__)->sibling('resources', $filename)->slurp;
+    }
 
     for (my $i=0; $i < @$replacements; $i++) {
         my ($find, $replace) = ($replacements->[$i], $replacements->[++$i]);
@@ -312,7 +309,7 @@ sub task {
     my $application = $self->piling->{ application };
     my $task_path = "lib/$application/Tasks/" . ($self->piling->{ package_path } ? $self->piling->{ package_path } . '/' : '');
 
-    $self->process($task_path, $self->piling->{ file_name }, $self->stub('stubs/Task.pm', [
+    $self->process($task_path, $self->piling->{ file_name }, $self->stub('stubs/Task.pm.stub', [
         Application => $self->piling->{ application },
         Stub        => $self->piling->{ package_name },
     ]));
@@ -321,7 +318,7 @@ sub task {
         # Routes Tests
         my $task_tests_path = "t/lib/TestCase/$application/Tasks/" . ($self->piling->{ package_path } ? $self->piling->{ package_path } . '/' : '');
 
-        $self->process($task_tests_path, $self->piling->{ file_name }, $self->stub('stubs/TaskTests.pm', [
+        $self->process($task_tests_path, $self->piling->{ file_name }, $self->stub('stubs/TaskTests.pm.stub', [
             Application => $self->piling->{ application },
             Stub        => $self->piling->{ package_name },
         ]));
@@ -346,3 +343,89 @@ sub template {
 }
 
 1;
+
+=encoding utf8
+
+=head1 NAME
+
+Mojolicious::Command::scaffold - Scaffold command
+
+=head1 SYNOPSIS
+
+    Usage: APPLICATION scaffold [OPTIONS]
+
+        ./myapp.pl scaffold
+        ./myapp.pl scaffold controller
+
+    Options:
+        'base|b:s',
+        'controller',
+        'name=s',
+        'pretend',
+        'preview',
+        'routes',
+        'table=s',
+        'template',
+        'tests',
+
+        -b, --base <string>         Base controller
+
+        --name <string>             Name of the controller, command that you are trying to create
+
+        --action <string>           Default action name for controller
+
+        --pretent                   When it's present, the command will just output the content
+                                    of the files that are about to be created
+
+        --preview                   When it's present, a confirmation message will appear before
+                                    saving a file
+
+        --create                    Tells if you are creating/altering a table
+        --table <string>            The name of the table
+
+        --tests                     Will create tests
+
+        --template                  Will create a template
+
+=head1 DESCRIPTION
+
+L<Mojolicious::Command::scaffold> helps you easily create commands, controllers, migrations, routes, tasks and templates
+
+See L<Mojolicious::Commands/"COMMANDS"> for a list of commands that are
+available by default.
+
+=head1 ATTRIBUTES
+
+L<Mojolicious::Command::scaffold> inherits all attributes from
+L<Mojo::Console> and implements the following new ones.
+
+=head2 description
+
+  my $description   = $scaffold->description;
+  $scaffold         = $scaffold->description('Foo');
+
+Short description of this command, used for the command list.
+
+=head2 usage
+
+  my $usage = $scaffold->usage;
+  $scaffold = $scaffold->usage('Foo');
+
+Usage information for this command, used for the help screen.
+
+=head1 METHODS
+
+L<Mojolicious::Command::scaffold> inherits all methods from
+L<Mojo::Console> and implements the following new ones.
+
+=head2 run
+
+  $scaffold->run(@ARGV);
+
+Run this command.
+
+=head1 SEE ALSO
+
+L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+
+=cut
