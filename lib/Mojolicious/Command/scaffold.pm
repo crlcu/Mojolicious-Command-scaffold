@@ -5,7 +5,7 @@ use Getopt::Long;
 use List::Util qw(any);
 use Mojo::File 'path';
 
-our $VERSION = '0.0.2';
+our $VERSION = '0.0.3';
 
 # Short description
 has 'description' => <<EOF;
@@ -13,21 +13,25 @@ Scaffold a command, controller, migration, routes, task and a template
 EOF
 
 has 'options' => sub {
-    my %options;
-    GetOptions(\%options,
-        'base|b:s',
-        'name=s',
+    my $options = {
+        rollback => 0,
+    };
+
+    GetOptions($options,
         'action=s',
+        'base|b:s',
+        'create',
+        'name=s',
         'pretend',
         'preview',
+        'rollback',
         'routes',
-        'create',
         'table=s',
         'template',
         'tests',
     );
 
-    return \%options;
+    return $options;
 };
 
 has 'piling' => sub {
@@ -59,10 +63,6 @@ Usage:  mojo scaffold
         mojo scaffold template --name="Mobile"
 EOF
 
-=head2 command
-    Scaffold a mojolicious command
-=cut
-
 sub command {
     my $self = shift;
 
@@ -77,10 +77,6 @@ sub command {
         Stub                    => $self->piling->{ package_name },
     ]));
 }
-
-=head2 controller
-    Scaffold a mojolicious controller
-=cut
 
 sub controller {
     my $self = shift;
@@ -124,10 +120,6 @@ sub controller {
     $self->template if ($self->options->{ template });
 }
 
-=head2 migration
-    Scaffold a migration
-=cut
-
 sub migration {
     my $self = shift;
 
@@ -159,31 +151,49 @@ sub migration {
         push(@columns, $column);
     }
 
-    my @lines;
+    my @up;
+    my @down;
 
     for my $column (@columns) {
-        push(@lines, sprintf("%s `%s` %s%s %s %s %s %s %s",
+        push(@up, sprintf("%s `%s` %s%s %s %s %s %s %s",
             ($self->options->{ create } ? '' : 'ADD COLUMN'),
             $column->{ field },
             $column->{ type },
             ($column->{ length } ? sprintf('(%s)', $column->{ length }) : ''),
             ($column->{ unsigned } ? 'unsigned' : ''),
             ($column->{ nullable } ? 'NULL' : 'NOT NULL'),
-            (length($column->{ default }) ? sprintf('DEFAULT %s', $column->{ default }) : $column->{ nullable } ? 'DEFAULT NULL' : ''),
+            (length($column->{ default }) ? sprintf('DEFAULT %s', $column->{ default }) : ($column->{ nullable } ? 'DEFAULT NULL' : '')),
             ($column->{ autoincrement } ? 'AUTO_INCREMENT' : ''),
             ($column->{ after } ? sprintf('AFTER `%s`', $column->{ after }) : ''),
         ));
+
+        if (!$self->options->{ create }) {
+            push(@down, sprintf("DROP COLUMN `%s`", $column->{ field }));
+        }
     }
 
     if ($self->options->{ create }) {
-        push(@lines, sprintf('PRIMARY KEY (`%s`)', $self->required->ask("What's the primary key?")));
+        push(@up, sprintf('PRIMARY KEY (`%s`)', $self->required->ask("What's the primary key?")));
+        @down = (sprintf('DROP TABLE IF EXISTS `%s`', $self->options->{ table }));
     }
 
-    my $sql = $self->options->{ create } ? 
+    my $sql = "-- UP\n";
+
+    $sql .= $self->options->{ create } ? 
         sprintf("CREATE TABLE `%s` (\n", $self->options->{ table }) : 
         sprintf("ALTER TABLE `%s`\n", $self->options->{ table });
 
-    $sql .= sprintf("%s%s;\n", join(",\n", @lines), ($self->options->{ create } ? "\n)" : ''));
+    $sql .= sprintf("%s%s;\n", join(",\n", @up), ($self->options->{ create } ? "\n)" : ''));
+
+    $self->options->{ rollback } ||= $self->confirm('Would you like to have UP and DOWN version for this migration?', 'no');
+
+    if ($self->options->{ rollback }) {
+        $sql .= "\n-- DOWN\n";
+
+        $sql .= $self->options->{ create } ? 
+            sprintf('DROP TABLE IF EXISTS `%s`', $self->options->{ table }) : 
+            sprintf("ALTER TABLE `%s`\n%s;\n", $self->options->{ table }, join(",\n", @down));
+    }
 
     my $file = sprintf('%s_%s_table_%s.sql',
         $self->app->calendar->ymd,
@@ -193,10 +203,6 @@ sub migration {
 
     $self->process('db_migrations/', $file, $sql);
 }
-
-=head2 process
-    Process content for a file
-=cut
 
 sub process {
     my ($self, $path, $file, $content) = @_;
@@ -218,10 +224,6 @@ sub process {
         $template->child($file)->spurt($content);
     }
 }
-
-=head2 routes
-    Scaffold a mojolicious routes file
-=cut
 
 sub routes {
     my $self = shift;
@@ -251,10 +253,6 @@ sub routes {
     }
 }
 
-=head2 run
-    Run scaffold command
-=cut
-
 sub run {
     my ($self, $choice, @args) = @_;
     
@@ -270,10 +268,6 @@ sub run {
 
     $self->error("Unknown choice\n");
 }
-
-=head2 stub
-    Open stub file and replace thing
-=cut
 
 sub stub {
     my ($self, $filename, $replacements) = @_;
@@ -294,10 +288,6 @@ sub stub {
 
     return $content;
 }
-
-=head2 task
-    Scaffold a mojolicious task file
-=cut
 
 sub task {
     my $self = shift;
@@ -324,10 +314,6 @@ sub task {
         ]));
     }
 }
-
-=head2 task
-    Scaffold a mojolicious template file
-=cut
 
 sub template {
     my $self = shift;
@@ -383,6 +369,8 @@ Mojolicious::Command::scaffold - Scaffold command
         --create                    Tells if you are creating/altering a table
         --table <string>            The name of the table
 
+        --rollback                  Will create the UP and DOWN version of the migration
+
         --tests                     Will create tests
 
         --template                  Will create a template
@@ -401,15 +389,39 @@ L<Mojo::Console> and implements the following new ones.
 
 =head2 description
 
-  my $description   = $scaffold->description;
-  $scaffold         = $scaffold->description('Foo');
+    my $description = $scaffold->description;
+    $scaffold       = $scaffold->description('Foo');
 
-Short description of this command, used for the command list.
+=head2 options
+
+    my $options = $scaffold->options;
+    $scaffold   = $scaffold->options({
+        action      => 'action',
+        base        => 'Base::Class'
+        create      => 1, # 0
+        name        => 'My::Name'
+        pretend     => 0, # 1
+        preview     => 1, # 0
+        rollback    => 1, # 0
+        routes      => 1, # 0
+        table       => 'some_table_name`,
+        template    => 1, # 0
+        tests       => 1, # 0
+    });
+
+A list of options used by scaffold command to decide what needs creating.
+
+=head2 piling
+
+    my $piling = $scaffold->piling;
+    $scaffold = $scaffold->piling({ ... });
+
+A list of options used by scaffold command to decide how to create things.
 
 =head2 usage
 
-  my $usage = $scaffold->usage;
-  $scaffold = $scaffold->usage('Foo');
+    my $usage = $scaffold->usage;
+    $scaffold = $scaffold->usage('Foo');
 
 Usage information for this command, used for the help screen.
 
@@ -418,14 +430,62 @@ Usage information for this command, used for the help screen.
 L<Mojolicious::Command::scaffold> inherits all methods from
 L<Mojo::Console> and implements the following new ones.
 
+=head2 command
+
+    $scaffold->command(@ARGV);
+
+Scaffold a mojolicious command
+
+=head2 controller
+
+    $scaffold->controller(@ARGV);
+
+Scaffold a mojolicious controller
+
+=head2 migration
+
+    $scaffold->migration(@ARGV);
+
+Scaffold a migration
+
+=head2 process
+
+    $scaffold->process($path, $file, $content);
+
+Process content for a file
+
+=head2 routes
+
+    $scaffold->routes(@ARGV);
+
+Scaffold a mojolicious routes file
+
 =head2 run
 
   $scaffold->run(@ARGV);
 
-Run this command.
+Run scaffold command.
+
+=head2 stub
+
+    $scaffold->stub($filename, $replacements);
+
+Open stub file and replace things
+
+=head2 task
+
+    $scaffold->task(@ARGV);
+
+Scaffold a mojolicious task file
+
+=head2 template
+
+    $scaffold->template(@ARGV);
+
+Scaffold a mojolicious template file
 
 =head1 SEE ALSO
 
-L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
+L<Mojo::Console>, L<DB::SQL::Migrations::Advanced>, L<Mojolicious>, L<Mojolicious::Guides>, L<https://mojolicious.org>.
 
 =cut
